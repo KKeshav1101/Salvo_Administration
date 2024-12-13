@@ -8,4 +8,4 @@ putting to use my fullstack and data visualisating+data handling skills
 Future Update should contain:
 -> Add Contribution + Evaluation + rating system integrated into the attendance system
 <br>
-<h5>Screenshots</h5>
+For screenshots, click here <a href=" ">Screenshots</a>
