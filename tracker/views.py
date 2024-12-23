@@ -44,25 +44,31 @@ def home(request):
             if member.joined_on <= meeting.date:
                 member_wise_total_duration[member.name]+=subtract(meeting.end_time,meeting.start_time)
     print(member_wise_total_duration)
+    if member_wise_total_duration!=0:
     # when this loop ends, every members maximum possible duration is calculated.
     # Now we have to match and calculate percentages and sort
-    attendance_percentage={member.name:0 for member in members}
-    for i in member_wise_attendance_duration:
-        for j in member_wise_total_duration:
-            if i==j:
-                print(i)
-                print(member_wise_attendance_duration[i])
-                print(member_wise_total_duration[i])
-                attendance_percentage[i]=member_wise_attendance_duration[i]/member_wise_total_duration[i]*100
-    print(attendance_percentage)
-    #at the end of this loop, attendance_percentage has name, percentage key value pairs
-    sorted_attendance_percentage=sorted(attendance_percentage.items(),key=lambda kv: (kv[1],kv[0]))
-    print(sorted_attendance_percentage)
+        attendance_percentage={member.name:0 for member in members}
+        for i in member_wise_attendance_duration:
+            for j in member_wise_total_duration:
+                if i==j:
+                    print(i)
+                    print(member_wise_attendance_duration[i])
+                    print(member_wise_total_duration[i])
+                    try:
+                        attendance_percentage[i]=member_wise_attendance_duration[i]/member_wise_total_duration[i]*100
+                    except:
+                        return redirect('/upload_attendance_file')
+        print(attendance_percentage)
+        #at the end of this loop, attendance_percentage has name, percentage key value pairs
+        sorted_attendance_percentage=sorted(attendance_percentage.items(),key=lambda kv: (kv[1],kv[0]))
+        print(sorted_attendance_percentage)
 
-    if len(sorted_attendance_percentage)>5:
-        return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage[:-7:-1],0),'lowest_attendees':column(sorted_attendance_percentage[0:6],0)})
+        if len(sorted_attendance_percentage)>5:
+            return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage[:-7:-1],0),'lowest_attendees':column(sorted_attendance_percentage[0:6],0)})
+        else:
+            return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage,0)})
     else:
-        return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage,0)})
+        return redirect('/upload_attendance_file')
 
 def add_members(request):
     form=MemberForm()
@@ -172,37 +178,40 @@ def add_minutes(request,code):
             
 
 def meeting_stats(request):
-    # Get all available meeting codes
     meeting_codes = Attendance.objects.values_list("meeting_code", flat=True).distinct()
 
     if request.method == "POST":
         meeting_code = request.POST.get("meeting_code")
         if meeting_code:
-            # Total duration for the selected meeting
-            total_duration = Attendance.objects.filter(meeting_code=meeting_code).aggregate(
-                total_duration=Sum("duration")
-            )["total_duration"]
+            # Fetch meeting and attendance data for the selected meeting
+            meeting = Meeting.objects.filter(code=meeting_code).first()
+            attendance_data = Attendance.objects.filter(meeting_code=meeting_code)
 
-            if not total_duration:
+            if not meeting or not attendance_data.exists():
                 return render(
                     request,
                     "meeting_stats.html",
                     {"meeting_codes": meeting_codes, "error": "No data found for the selected meeting code."},
                 )
 
-            # Calculate thresholds and attendee counts
-            threshold_40 = total_duration * 0.4
-            threshold_80 = total_duration * 0.8
+            # Calculate the meeting duration
+            total_meeting_duration = subtract(meeting.end_time, meeting.start_time)
 
-            under_40_count = Attendance.objects.filter(meeting_code=meeting_code, duration__lt=threshold_40).count()
-            between_40_and_80_count = Attendance.objects.filter(
-                meeting_code=meeting_code, duration__gte=threshold_40, duration__lt=threshold_80
-            ).count()
-            above_80_count = Attendance.objects.filter(meeting_code=meeting_code, duration__gte=threshold_80).count()
+            # Calculate individual durations and categorize attendees
+            under_40_count = 0
+            between_40_and_80_count = 0
+            above_80_count = 0
+            under_40_names = []
 
-            under_40_names = Attendance.objects.filter(
-                meeting_code=meeting_code, duration__lt=threshold_40
-            ).values_list("member_name", flat=True)
+            for attendee in attendance_data:
+                percentage = (attendee.duration.total_seconds() / total_meeting_duration) * 100
+                if percentage < 40:
+                    under_40_count += 1
+                    under_40_names.append(attendee.member_name)
+                elif 40 <= percentage < 80:
+                    between_40_and_80_count += 1
+                else:
+                    above_80_count += 1
 
             return render(
                 request,
@@ -214,7 +223,7 @@ def meeting_stats(request):
                     "under_40_count": under_40_count,
                     "between_40_and_80_count": between_40_and_80_count,
                     "above_80_count": above_80_count,
-                    "under_40_names": list(under_40_names),
+                    "under_40_names": under_40_names,
                 },
             )
 
@@ -234,22 +243,23 @@ def member_stats(request):
             return render(request, "member_stats.html", {"member_names": member_names, "error": f"Member '{member_name}' not found."})
 
         join_date = member.joined_on
-        total_meeting_duration = Attendance.objects.filter(
-            meeting_code__in=Meeting.objects.filter(date__gte=join_date).values_list("code", flat=True)
-        ).aggregate(total_duration=Sum("duration"))["total_duration"]
+        meetings = Meeting.objects.filter(date__gte=join_date)
+        attendance_data = Attendance.objects.filter(member_name=member_name)
 
-        if not total_meeting_duration:
-            return render(request, "member_stats.html", {"member_names": member_names, "error": f"No meetings found for {member_name}."})
-
-        member_data = Attendance.objects.filter(member_name=member_name)
-        total_attended_duration = member_data.aggregate(total_duration=Sum("duration"))["total_duration"]
-
-        if not total_attended_duration:
-            return render(request, "member_stats.html", {"member_names": member_names, "error": f"No attendance data found for {member_name}."})
-
-        attendance_percentage = (
-            (total_attended_duration / total_meeting_duration) * 100 if total_meeting_duration else 0
+        # Calculate total available meeting hours
+        total_meeting_duration = sum(
+            subtract(meeting.end_time, meeting.start_time) for meeting in meetings
         )
+
+        # Calculate total attended hours
+        total_attended_duration = sum(
+            record.duration.total_seconds() for record in attendance_data
+        )
+
+        if total_meeting_duration == 0:
+            return render(request, "member_stats.html", {"member_names": member_names, "error": f"No valid meeting data for {member_name}."})
+
+        attendance_percentage = (total_attended_duration / total_meeting_duration) * 100
 
         # Prepare data for chart
         meeting_durations_json = json.dumps([
@@ -257,7 +267,7 @@ def member_stats(request):
                 "meeting_code": record["meeting_code"],
                 "total_duration": record["total_duration"].total_seconds() if record["total_duration"] else 0
             }
-            for record in member_data.values("meeting_code").annotate(total_duration=Sum("duration"))
+            for record in attendance_data.values("meeting_code").annotate(total_duration=Sum("duration"))
         ])
 
         return render(
