@@ -54,10 +54,10 @@ def home(request):
                     print(i)
                     print(member_wise_attendance_duration[i])
                     print(member_wise_total_duration[i])
-                    try:
+                    if(member_wise_total_duration[i]!=0):
                         attendance_percentage[i]=member_wise_attendance_duration[i]/member_wise_total_duration[i]*100
-                    except:
-                        return redirect('/upload_attendance_file')
+                    else:
+                        attendance_percentage[i]=0.000001 #dummy init
         print(attendance_percentage)
         #at the end of this loop, attendance_percentage has name, percentage key value pairs
         sorted_attendance_percentage=sorted(attendance_percentage.items(),key=lambda kv: (kv[1],kv[0]))
@@ -67,8 +67,9 @@ def home(request):
             return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage[:-7:-1],0),'lowest_attendees':column(sorted_attendance_percentage[0:6],0)})
         else:
             return render(request,'home.html',{'highest_attendees':column(sorted_attendance_percentage,0)})
-    else:
-        return redirect('/upload_attendance_file')
+    #else:
+    #code existed for first run only.
+        #return redirect('/upload_attendance_file')
 
 def add_members(request):
     form=MemberForm()
